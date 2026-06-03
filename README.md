@@ -1,169 +1,182 @@
 # Webhook Ledger Service (Go + PostgreSQL + MVC)
 
-A secure, high-performance HTTP service implemented in Go to process signed ledger webhooks and query consolidated user balances. It strictly adheres to the Model-View-Controller (MVC) pattern and leverages PostgreSQL for transaction storage and balance consistency.
+Este projeto consiste em um serviço de Ledger (livro-razão) de alta performance e precisão financeira desenvolvido em Go, utilizando PostgreSQL para armazenamento seguro e o roteador Chi (`go-chi`). O sistema processa transações assinadas via Webhooks e consolida saldos com precisão decimal arbitrária de forma concorrente e segura.
 
 ---
 
-## Architecture & Tech Stack
+## 🚀 Como Iniciar de Forma Simples (Quick Start)
 
-* **Framework/Router**: [Chi (`github.com/go-chi/chi/v5`)](https://github.com/go-chi/chi) - A lightweight, net/http-compatible router for structured logging, panics recovery, and request ID tracking.
-* **Database**: **PostgreSQL 16** - Selected for strong transactional safety (`ACID`) and precise storage.
-* **Monetary Precision**: [Shopspring Decimal (`github.com/shopspring/decimal`)](https://github.com/shopspring/decimal) - Ensures absolute decimal precision on all mathematical operations (handling 18 decimal places or more).
-* **Database Driver**: [lib/pq (`github.com/lib/pq`)](https://github.com/lib/pq) - Standard pure-Go driver for PostgreSQL.
-* **Structured Logging**: Native `log/slog` (introduced in Go 1.21) - Production-grade structured logging format generating JSON outputs.
-* **Containerization**: Multi-stage `Dockerfile` and `docker-compose.yml` for unified orchestration.
+A maneira mais rápida e fácil de rodar o projeto localmente com todas as dependências pré-configuradas é usando o **Docker Compose**:
 
----
-
-## Folder Structure
-
-```
-kiichain-assessment/
-├── cmd/
-│   └── server/
-│       └── main.go             # Entrypoint (initializes DB, router, and starts server)
-├── config/
-│   └── config.go           # Loads environment variables (DB credentials, secret key, port)
-├── db/
-│   └── migrations/
-│       └── 000001_init.up.sql  # SQL schema definition (ledger_entries, balances)
-├── pkg/
-│   ├── models/                 # M: Models & Data Layer (encapsulates DB operations)
-│   │   ├── db.go               # DB connection pool setup & migrations runner
-│   │   ├── ledger_entry.go     # Transactions/Ledger DB logic & struct
-│   │   └── balance.go          # User Balances DB logic & struct
-│   ├── views/                  # V: Views & Serialization (JSON formatting)
-│   │   └── response.go         # API JSON structures & response writers
-│   ├── controllers/            # C: Controllers (receives requests, calls models)
-│   │   ├── webhook_controller.go
-│   │   └── balance_controller.go
-│   └── middleware/             # HTTP Middlewares (logging, headers, authentication)
-│       ├── auth.go             # HMAC signature & replay attack validation
-│       ├── logger.go           # Structured logging mapping request ID
-│       └── headers.go          # Custom headers middleware (X-Empty-Header)
-├── tests/                      # Integration testing suite
-│   └── integration/            # Route-based integration test files
-│       ├── webhook/
-│       │   └── post_test.go    # Integration tests for POST /webhook
-│       └── balance/
-│           └── get_test.go     # Integration tests for GET /balance/{user}
-├── Dockerfile                  # Production multi-stage Docker build
-├── docker-compose.yml          # Local container environment (App + Postgres)
-├── README.md                   # This documentation guide
-└── run.sh                      # E2E integration test script using curl & openssl
-```
-
----
-
-## Getting Started
-
-### 1. Run the Entire System (App + Database)
-You can build and start the application containerized alongside PostgreSQL using:
 ```bash
 docker compose up --build
 ```
-This command:
-1. Spins up PostgreSQL and runs a healthcheck.
-2. Builds the Go application statically.
-3. Automatically runs SQL migrations on application startup.
-4. Exposes the API server on `http://localhost:8080`.
+
+### O que este comando faz automaticamente?
+1. Inicializa o banco de dados PostgreSQL 16.
+2. Compila a aplicação Go de maneira otimizada (multi-stage build).
+3. **Executa as migrations automaticamente** estruturando as tabelas do banco.
+4. Disponibiliza a API HTTP na porta `8080` (pronta para uso em `http://localhost:8080`).
 
 ---
 
-## Configuration
+## 🛠️ Decisões de Arquitetura & Design (Destaques do Assessment)
 
-The application is configured using environment variables (with sensible defaults):
+> [!IMPORTANT]
+> Esta seção detalha as principais escolhas arquiteturais tomadas para garantir qualidade de código, facilidade de avaliação e robustez operacional.
 
-| Env Variable | Description | Default |
+### 1. Arquitetura MVC (Model-View-Controller)
+Para garantir uma separação limpa de responsabilidades, o projeto foi estruturado utilizando o padrão clássico MVC:
+* **Model (`pkg/models`)**: Gerencia o estado físico do banco de dados, transações ACID e consultas estruturadas. Toda a lógica de persistência e locking concorrente reside aqui.
+* **View (`pkg/views`)**: Controla a serialização e representação externa das respostas (ex: converter o tipo `decimal.Decimal` em `string` no JSON para evitar qualquer perda de precisão flutuante no cliente).
+* **Controller (`pkg/controllers`)**: Orquestra o fluxo de dados, recebendo a requisição HTTP, acionando a validação de entrada, invocando os Models apropriados e retornando as Views correspondentes.
+
+### 2. Migrations Automáticas com Advisory Locks
+As migrations de esquema do banco de dados (`db/migrations`) são carregadas em tempo de compilação usando a diretiva `//go:embed` e **executadas automaticamente na inicialização da aplicação** (dentro de `models.InitDB`).
+* **Segurança Concorrente**: Para evitar condições de corrida (race conditions) de DDL quando múltiplas instâncias da aplicação iniciam simultaneamente (como em testes concorrentes ou deploy distribuído), utilizamos uma trava transacional exclusiva no PostgreSQL (`SELECT pg_advisory_xact_lock(42069)`). Isso garante atomicidade de migração por processo.
+
+### 3. Test Orchestrator (`tests/orchestrator.go`)
+Para evitar código duplicado (DRY) e garantir o isolamento absoluto dos testes de integração, criamos um **Orchestrator de Testes** ([orchestrator.go](file:///c:/Users/konam/OneDrive/Desktop/Workstation/Pedro%20Tec/kiichain-assessment/tests/orchestrator.go)).
+* Ele abstrai operações pesadas de infraestrutura como inicialização de pool de conexão, execução de migrations sob demanda, limpeza do banco (`TRUNCATE TABLE` com cascade) entre testes, injeção de saldos falsos (seeding) e consultas diretas para asserções físicas de saldo.
+
+### 4. Submissão Proposital do `.env.development`
+O arquivo de configuração local `.env.development` **foi mantido de forma proposital no repositório Git**.
+* **Zero Friction**: Esta decisão visa reduzir a fricção de inicialização do avaliador. Não há necessidade de criar ou renomear arquivos de ambiente manualmente para rodar a suite de testes locais ou subir a aplicação pela primeira vez.
+
+### 5. Filtro de Input nos Controllers (`filterInput`)
+A validação de integridade dos dados de entrada (como checagem de parâmetros nulos, tipos inválidos e conversões decimais) foi isolada dentro de um método helper privado `filterInput` em cada Controller.
+* Isso garante que a assinatura dos handlers HTTP principais permaneça limpa, legível e focada em controlar o fluxo, delegando a higienização primária de payload para uma sub-função com responsabilidade única.
+
+### 6. Linting Rígido & Fluxo de CI
+* **Linter (`golangci-lint`)**: Adicionamos um arquivo de configuração rígido [`.golangci.yml`](file:///c:/Users/konam/OneDrive/Desktop/Workstation/Pedro%20Tec/kiichain-assessment/.golangci.yml) para rodar verificações de formatação estrita, checagem de erros ignorados (`errcheck`), importações não utilizadas e boas práticas.
+* **CI (GitHub Actions)**: Configuramos um pipeline no GitHub Actions ([`ci.yml`](file:///c:/Users/konam/OneDrive/Desktop/Workstation/Pedro%20Tec/kiichain-assessment/.github/workflows/ci.yml)) que, a cada push ou pull request, inicializa uma instância isolada do PostgreSQL como serviço no GitHub Runner, formata o código, executa o linter estático e roda toda a suíte de testes de integração.
+
+---
+
+## 📂 Estrutura de Pastas
+
+```
+kiichain-assessment/
+├── .github/workflows/
+│   └── ci.yml              # Fluxo de CI automatizado (Linter + Testes)
+├── cmd/
+│   └── server/
+│       └── main.go         # Bootstraps da API (Inicializa DB, Roteador e Servidor)
+├── config/
+│   └── config.go           # Carregador de variáveis de ambiente com defaults
+├── db/
+│   └── migrations/
+│       ├── 000001_init.up.sql  # Definição física de tabelas e chaves únicas
+│       └── migrations.go       # Embed de migrations do banco
+├── pkg/
+│   ├── controllers/        # C: Controllers (recepção de request, chamada ao filterInput)
+│   │   ├── webhook_controller.go
+│   │   └── balance_controller.go
+│   ├── middleware/         # Middlewares (Assinatura HMAC, X-Empty-Header, Structured Log)
+│   │   ├── auth.go
+│   │   ├── headers.go
+│   │   └── logger.go
+│   ├── models/             # M: Models (Interações físicas de escrita e leitura de saldos)
+│   │   ├── db.go
+│   │   ├── ledger_entry.go
+│   │   └── balance.go
+│   └── views/              # V: Views (Serialização segura de precisão decimal)
+│       └── response.go
+├── tests/
+│   ├── integration/        # Testes de integração física contra Postgres
+│   │   ├── balance/
+│   │   │   └── get_test.go
+│   │   └── webhook/
+│   │       └── post_test.go
+│   └── orchestrator.go     # Abstração de controle de testes e infraestrutura
+├── .env.development        # Configurações de ambiente (enviado propositalmente)
+├── .golangci.yml           # Configuração de linters rigorosos de código
+├── Dockerfile              # Construção multi-estágio da aplicação
+├── docker-compose.yml      # Docker Compose com postgres integrado
+└── run.sh                  # Script bash com curl para validação E2E
+```
+
+---
+
+## ⚙️ Variáveis de Ambiente Configuráveis
+
+| Variável | Descrição | Padrão |
 | :--- | :--- | :--- |
-| `PORT` | HTTP Port the server listens on | `8080` |
-| `HMAC_SECRET` | Secret key used to verify HMAC-SHA256 signatures | *(Required)* |
-| `TOLERANCE_MINUTES` | Time window tolerance in minutes to prevent replay attacks | `5` |
-| `DB_HOST` | Hostname of the Postgres DB | `localhost` |
-| `DB_PORT` | Port of the Postgres DB | `5432` |
-| `DB_USER` | Username for the Postgres DB | `postgres` |
-| `DB_PASSWORD` | Password for the Postgres DB | `postgres` |
-| `DB_NAME` | Name of the database to use | `ledger` |
-| `DB_SSLMODE` | SSL Mode for Postgres connection | `disable` |
+| `PORT` | Porta usada pelo servidor HTTP | `8080` |
+| `HMAC_SECRET` | Chave simétrica usada para assinar/verificar payloads | *(Obrigatória)* |
+| `TOLERANCE_MINUTES` | Janela de tolerância em minutos para expiração de timestamp | `5` |
+| `DB_HOST` | Host do banco PostgreSQL | `localhost` |
+| `DB_PORT` | Porta do banco PostgreSQL | `5432` |
+| `DB_USER` | Usuário do banco PostgreSQL | `postgres` |
+| `DB_PASSWORD` | Senha do banco PostgreSQL | `postgres` |
+| `DB_NAME` | Nome do banco PostgreSQL | `ledger` |
+| `DB_SSLMODE` | SSL Mode para a conexão Postgres | `disable` |
 
 ---
 
-## API Documentation
+## 📖 Documentação da API
 
-### 1. Update Ledger Webhook
-* **Endpoint**: `POST /webhook`
-* **Security Headers**:
-  * `X-Timestamp`: The UNIX timestamp (in seconds) of when the request was created.
-  * `X-Nonce`: A unique nonce string for each request.
-  * `X-Signature`: Hex-encoded HMAC-SHA256 signature.
-* **Signature Payload Format**:
-  `payload = X-Timestamp + "\n" + X-Nonce + "\n" + <raw_request_body_bytes>`
-* **Request Body**:
+### 1. Registrar Transação via Webhook
+* **Rota**: `POST /webhook`
+* **Headers de Segurança**:
+  * `X-Timestamp`: Unix Timestamp em segundos do envio da requisição.
+  * `X-Nonce`: Identificador único (UUID ou string aleatória) de uso único.
+  * `X-Signature`: Assinatura HMAC-SHA256 hex-encoded do payload.
+* **Formato do Payload Assinado**:
+  `payload = X-Timestamp + "\n" + X-Nonce + "\n" + <raw_body_bytes>`
+* **Exemplo de Body (JSON)**:
   ```json
   {
     "user": "user_alice",
     "asset": "ETH",
-    "amount": "1.250000000000000000"
+    "amount": "1.500000000000000000"
   }
   ```
-* **Success Response (200 OK)**:
-  ```json
-  {
-    "status": "success"
-  }
-  ```
-* **Failure Response Statuses**:
-  * `400 Bad Request`: Missing headers, invalid JSON format, or expired timestamp (replay check).
-  * `401 Unauthorized`: Invalid request signature.
-  * `409 Conflict`: Replay attack detected (reused nonce).
-  * `500 Internal Server Error`: Database transactional failures.
+* **Respostas HTTP**:
+  * `200 OK`: Transação criada e saldo consolidado com sucesso.
+  * `400 Bad Request`: Payload malformado, headers ausentes ou timestamp fora da tolerância (replay check).
+  * `401 Unauthorized`: Assinatura HMAC inválida.
+  * `409 Conflict`: Replay attack detectado (nonce repetido).
 
----
-
-### 2. Retrieve User Balance
-* **Endpoint**: `GET /balance/{user}`
-* **Success Response (200 OK)**:
+### 2. Consultar Saldos Consolidados
+* **Rota**: `GET /balance/{user}`
+* **Exemplo de Resposta (200 OK)**:
   ```json
   {
     "user": "user_alice",
     "balances": {
-      "ETH": "1.250000000000000000"
+      "ETH": "1.500000000000000000"
     }
   }
   ```
-  *Note: Users with no recorded balances return a formatted empty object: `{"user":"unknown_user","balances":{}}`.*
+  *(Nota: Se o usuário não existir no banco, a API retorna um objeto balances vazio formatado em JSON `{}`).*
 
 ---
 
-## Verification & Testing
+## 🧪 Verificação & Testes de Integração
 
-### 1. Run Automated Integration Tests
-Integration tests are located under `/tests/integration/...` and verify actual HTTP calls against a real PostgreSQL instance.
-
-To run the integration tests locally:
-1. Start only the PostgreSQL container:
+### 1. Rodar a Suíte de Testes Locais
+Para validar de ponta a ponta as condições de concorrência, idempotência e precisão aritmética de 18 casas decimais:
+1. Suba apenas o contêiner do banco de dados:
    ```bash
    docker compose up -d db
    ```
-2. Run the Go test command:
+2. Execute o comando Go de testes:
    ```bash
-   go test -v ./tests/integration/...
+   go test -p 1 -count=1 -v ./tests/integration/...
    ```
-   *(Note: This uses standard Go testing package. If Go is not on your PATH, use the absolute path: `& "C:\Program Files\Go\bin\go.exe" test -v ./tests/integration/...`)*
 
-### 2. Run E2E Flow Script
-We provide a bash script `run.sh` that simulates a full transaction lifecycle:
-1. Verifies the initial empty balance.
-2. Deposits `1500.50 USDT` via a signed webhook (calculating HMAC).
-3. Asserts the balance changed.
-4. Simulates a **Replay Attack** by sending the same nonce (asserts `409 Conflict`).
-5. Simulates an **Invalid Signature** webhook (asserts `401 Unauthorized`).
-6. Simulates an **Expired Timestamp** (asserts `400 Bad Request`).
-7. Deducts `500.25 USDT` via a signed webhook.
-8. Asserts the final balance matches exactly `1000.25 USDT`.
-
-To run the verification script:
+### 2. Rodar Script de Simulação E2E
+Criamos um script utilitário (`run.sh`) que faz chamadas curl assinadas gerando assinaturas válidas em tempo de execução:
 ```bash
 chmod +x run.sh
 ./run.sh
 ```
+O script simula:
+1. Verificação de saldo inicial vazio (`{}`).
+2. Depósito bem sucedido de `1500.50 USDT`.
+3. Bloqueio de **Replay Attack** enviando o mesmo nonce (retorna `409 Conflict`).
+4. Bloqueio de assinatura inválida (retorna `401 Unauthorized`).
+5. Bloqueio de timestamp expirado (retorna `400 Bad Request`).
+6. Dedução bem sucedida de `500.25 USDT`.
+7. Verificação de saldo acumulado de exatamente `1000.25 USDT`.
