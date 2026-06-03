@@ -1,0 +1,23 @@
+# Binaries
+bin/
+server
+
+# Environment files containing secrets
+.env
+.env.production
+.env.staging
+
+# IDE configurations
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+
+# OS Files
+Thumbs.db
+db.webproj
+*.esproj
+.DS_Store
