@@ -6,10 +6,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -244,6 +246,164 @@ func TestWebhookIntegration(t *testing.T) {
 		expectedBalance := decimal.RequireFromString("1.500000000000000000")
 		if !ethBalance.Equal(expectedBalance) {
 			t.Errorf("Expected ETH balance to be updated to %s, got %s", expectedBalance, ethBalance)
+		}
+	})
+
+	t.Run("Concurrency - Replay Protection (Same Nonce)", func(t *testing.T) {
+		// Clean database for a fresh state
+		orch.CleanDatabase(t)
+
+		reqBody := controllers.WebhookRequest{
+			User:   "user_concy_replay",
+			Asset:  "USD",
+			Amount: "100.00",
+		}
+		bodyBytes, _ := json.Marshal(reqBody)
+
+		nonce := "nonce_concurrent_replay"
+		timestampStr := strconv.FormatInt(time.Now().Unix(), 10)
+		signature := computeHMAC(orch.Config.HMACSecret, timestampStr, nonce, bodyBytes)
+
+		const concurrentCount = 10
+		var wg sync.WaitGroup
+		statusCodes := make(chan int, concurrentCount)
+
+		for i := 0; i < concurrentCount; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				req, err := http.NewRequest(http.MethodPost, server.URL+"/webhook", bytes.NewReader(bodyBytes))
+				if err != nil {
+					t.Errorf("Failed to create request: %v", err)
+					return
+				}
+				req.Header.Set("Content-Type", "application/json")
+				req.Header.Set("X-Timestamp", timestampStr)
+				req.Header.Set("X-Nonce", nonce)
+				req.Header.Set("X-Signature", signature)
+
+				resp, err := http.DefaultClient.Do(req)
+				if err != nil {
+					t.Errorf("Request failed: %v", err)
+					return
+				}
+				_ = resp.Body.Close()
+				statusCodes <- resp.StatusCode
+			}()
+		}
+
+		wg.Wait()
+		close(statusCodes)
+
+		successCount := 0
+		conflictCount := 0
+		otherCount := 0
+
+		for code := range statusCodes {
+			switch code {
+			case http.StatusOK:
+				successCount++
+			case http.StatusConflict:
+				conflictCount++
+			default:
+				otherCount++
+			}
+		}
+
+		// Exactly one request must succeed, and all others must fail with 409 Conflict
+		if successCount != 1 {
+			t.Errorf("Expected exactly 1 successful request, got %d", successCount)
+		}
+		if conflictCount != concurrentCount-1 {
+			t.Errorf("Expected exactly %d duplicate nonce conflict requests, got %d", concurrentCount-1, conflictCount)
+		}
+		if otherCount > 0 {
+			t.Errorf("Got unexpected HTTP status codes: %d responses", otherCount)
+		}
+
+		// Ensure the balance was only updated once (value should be exactly 100.00)
+		bal, ok := orch.GetBalance(t, "user_concy_replay", "USD")
+		if !ok {
+			t.Fatalf("Expected balance to exist in database")
+		}
+		expectedBalance := decimal.RequireFromString("100.00")
+		if !bal.Equal(expectedBalance) {
+			t.Errorf("Expected balance to be %s, got %s", expectedBalance, bal)
+		}
+	})
+
+	t.Run("Concurrency - Balance Accumulation (Different Nonces)", func(t *testing.T) {
+		// Clean database
+		orch.CleanDatabase(t)
+
+		const concurrentCount = 50
+		const amountPerReq = "0.1"
+		userID := "user_concy_accum"
+		asset := "BTC"
+
+		var wg sync.WaitGroup
+		statusCodes := make(chan int, concurrentCount)
+
+		for i := 0; i < concurrentCount; i++ {
+			wg.Add(1)
+			go func(index int) {
+				defer wg.Done()
+				reqBody := controllers.WebhookRequest{
+					User:   userID,
+					Asset:  asset,
+					Amount: amountPerReq,
+				}
+				bodyBytes, _ := json.Marshal(reqBody)
+
+				nonce := fmt.Sprintf("nonce_accum_%d", index)
+				timestampStr := strconv.FormatInt(time.Now().Unix(), 10)
+				signature := computeHMAC(orch.Config.HMACSecret, timestampStr, nonce, bodyBytes)
+
+				req, err := http.NewRequest(http.MethodPost, server.URL+"/webhook", bytes.NewReader(bodyBytes))
+				if err != nil {
+					t.Errorf("Failed to create request: %v", err)
+					return
+				}
+				req.Header.Set("Content-Type", "application/json")
+				req.Header.Set("X-Timestamp", timestampStr)
+				req.Header.Set("X-Nonce", nonce)
+				req.Header.Set("X-Signature", signature)
+
+				resp, err := http.DefaultClient.Do(req)
+				if err != nil {
+					t.Errorf("Request failed: %v", err)
+					return
+				}
+				_ = resp.Body.Close()
+				statusCodes <- resp.StatusCode
+			}(i)
+		}
+
+		wg.Wait()
+		close(statusCodes)
+
+		// Assert all requests return 200 OK
+		successCount := 0
+		for code := range statusCodes {
+			if code == http.StatusOK {
+				successCount++
+			}
+		}
+
+		if successCount != concurrentCount {
+			t.Errorf("Expected all %d requests to succeed, got %d successes", concurrentCount, successCount)
+		}
+
+		// Assert that the final balance is exactly equivalent to concurrentCount * amountPerReq
+		bal, ok := orch.GetBalance(t, userID, asset)
+		if !ok {
+			t.Fatalf("Expected balance record to exist in database")
+		}
+
+		// Expected sum is 50 * 0.1 = 5.0
+		expectedSum := decimal.NewFromFloat(float64(concurrentCount)).Mul(decimal.RequireFromString(amountPerReq))
+		if !bal.Equal(expectedSum) {
+			t.Errorf("Lost update or incorrect balance accumulation: expected %s, got %s", expectedSum, bal)
 		}
 	})
 }
