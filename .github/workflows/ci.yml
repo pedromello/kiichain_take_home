@@ -1,0 +1,83 @@
+name: Go CI Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  lint-and-format:
+    name: Lint and Format Checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: true
+
+      - name: Verify Code Formatting (gofmt)
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "The following Go files are not formatted correctly. Please run 'go fmt ./...':"
+            echo "$unformatted"
+            exit 1
+          fi
+          echo "All Go files are formatted correctly!"
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          args: --timeout=5m
+
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    
+    # Provision a live Postgres database container for integration tests
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ledger
+        ports:
+          - 5432:5432
+        # Ensure postgres is healthy before continuing
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: true
+
+      - name: Download Dependencies
+        run: go mod download
+
+      - name: Run Integration Tests
+        env:
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_USER: postgres
+          DB_PASSWORD: postgres
+          DB_NAME: ledger
+          DB_SSLMODE: disable
+          HMAC_SECRET: test-secret-key-very-long-and-secure
+          TOLERANCE_MINUTES: 5
+        run: go test -p 1 -count=1 -v ./tests/integration/...

@@ -50,7 +50,7 @@ func TestGetBalanceIntegration(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Request failed: %v", err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusOK {
 			t.Errorf("Expected 200 OK, got %d", resp.StatusCode)
@@ -108,7 +108,7 @@ func TestGetBalanceIntegration(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Request failed: %v", err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusOK {
 			t.Errorf("Expected 200 OK, got %d", resp.StatusCode)

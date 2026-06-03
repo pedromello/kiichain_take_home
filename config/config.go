@@ -1,3 +1,4 @@
+// Package config provides config parsing and validation logic for the application.
 package config
 
 import (

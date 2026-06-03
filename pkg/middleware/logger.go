@@ -14,7 +14,7 @@ func LoggerMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		reqID := middleware.GetReqID(r.Context())
-		
+
 		// Wrap the ResponseWriter to capture the status code and bytes written
 		ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
 

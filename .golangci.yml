@@ -1,0 +1,21 @@
+run:
+  timeout: 5m
+  issues-exit-code: 1
+  tests: true
+
+linters:
+  disable-all: true
+  enable:
+    - govet        # Reports suspicious constructs (printf alignments, shadow variables, etc.)
+    - errcheck     # Ensures all returned errors are explicitly handled or assigned
+    - staticcheck  # Executes advanced static code analysis for bugs and performance
+    - unused       # Detects unused constants, variables, functions, and types
+    - gosimple     # Suggests code simplifications
+    - ineffassign  # Identifies variable assignments that are never read
+    - typecheck    # Standard compiler type checking
+    - revive       # Extensible and fast style check linter (successor to golint)
+
+issues:
+  exclude-use-default: false
+  max-issues-per-linter: 0
+  max-same-issues: 0
