@@ -1,130 +1,144 @@
 # Webhook Ledger Service (Go + PostgreSQL + MVC)
 
-Este projeto consiste em um serviço de Ledger (livro-razão) de alta performance e precisão financeira desenvolvido em Go, utilizando PostgreSQL para armazenamento seguro e o roteador Chi (`go-chi`). O sistema processa transações assinadas via Webhooks e consolida saldos com precisão decimal arbitrária de forma concorrente e segura.
+This project is a high-performance, financially precise ledger service implemented in Go. It utilizes PostgreSQL for persistent storage and Chi (`go-chi`) for HTTP routing. The service processes signed webhook transactions and aggregates user balances with arbitrary decimal precision under concurrent and secure conditions.
 
 ---
 
-## 🚀 Como Iniciar de Forma Simples (Quick Start)
+## 🚀 Getting Started (Quick Start)
 
-A maneira mais rápida e fácil de rodar o projeto localmente com todas as dependências pré-configuradas é usando o **Docker Compose**:
+The fastest and easiest way to spin up the application local environment with all dependencies pre-configured is using **Docker Compose**:
 
 ```bash
 docker compose up --build
 ```
 
-### O que este comando faz automaticamente?
-1. Inicializa o banco de dados PostgreSQL 16.
-2. Compila a aplicação Go de maneira otimizada (multi-stage build).
-3. **Executa as migrations automaticamente** estruturando as tabelas do banco.
-4. Disponibiliza a API HTTP na porta `8080` (pronta para uso em `http://localhost:8080`).
+### What does this command do automatically?
+
+1. Starts the PostgreSQL 16 database and runs healthchecks.
+2. Compiles the Go application statically (using a multi-stage Docker build).
+3. **Automatically executes database migrations** to set up tables and constraints.
+4. Exposes the HTTP API on port `8080`.
 
 ---
 
-## 🛠️ Decisões de Arquitetura & Design (Destaques do Assessment)
+## 🛠️ Architectural & Design Decisions
 
-> [!IMPORTANT]
-> Esta seção detalha as principais escolhas arquiteturais tomadas para garantir qualidade de código, facilidade de avaliação e robustez operacional.
+> This section details the architectural choices made to ensure code quality, ease of evaluation, and operational robustness.
 
-### 1. Arquitetura MVC (Model-View-Controller)
-Para garantir uma separação limpa de responsabilidades, o projeto foi estruturado utilizando o padrão clássico MVC:
-* **Model (`pkg/models`)**: Gerencia o estado físico do banco de dados, transações ACID e consultas estruturadas. Toda a lógica de persistência e locking concorrente reside aqui.
-* **View (`pkg/views`)**: Controla a serialização e representação externa das respostas (ex: converter o tipo `decimal.Decimal` em `string` no JSON para evitar qualquer perda de precisão flutuante no cliente).
-* **Controller (`pkg/controllers`)**: Orquestra o fluxo de dados, recebendo a requisição HTTP, acionando a validação de entrada, invocando os Models apropriados e retornando as Views correspondentes.
+### 1. MVC Architecture (Model-View-Controller)
 
-### 2. Migrations Automáticas com Advisory Locks
-As migrations de esquema do banco de dados (`db/migrations`) são carregadas em tempo de compilação usando a diretiva `//go:embed` e **executadas automaticamente na inicialização da aplicação** (dentro de `models.InitDB`).
-* **Segurança Concorrente**: Para evitar condições de corrida (race conditions) de DDL quando múltiplas instâncias da aplicação iniciam simultaneamente (como em testes concorrentes ou deploy distribuído), utilizamos uma trava transacional exclusiva no PostgreSQL (`SELECT pg_advisory_xact_lock(42069)`). Isso garante atomicidade de migração por processo.
+To ensure a clean separation of concerns, the project strictly adheres to the classical MVC pattern:
+
+- **Model (`pkg/models`)**: Manages the physical state of the database, ACID transactions, and structured queries. All persistence and lock contention logic resides here.
+- **View (`pkg/views`)**: Controls the serialization and external representation of response payloads (e.g., converting `decimal.Decimal` to `string` in JSON outputs to prevent floating-point precision loss on the client side).
+- **Controller (`pkg/controllers`)**: Orchestrates the flow of data. It intercepts incoming HTTP requests, invokes input validation, calls the appropriate Models, and returns the corresponding Views.
+
+### 2. Automatic Migrations with PostgreSQL Advisory Locks
+
+Database schema migrations (`db/migrations`) are embedded at compile time using the Go `//go:embed` directive and **executed automatically on application startup** (within `models.InitDB`).
+
+- **Concurrency Safety**: To prevent DDL race conditions when multiple instances of the application start concurrently (such as in parallel test suites or distributed deployments), we acquire a transaction-level advisory lock (`SELECT pg_advisory_xact_lock(42069)`). This guarantees atomic schema migration per database instance.
 
 ### 3. Test Orchestrator (`tests/orchestrator.go`)
-Para evitar código duplicado (DRY) e garantir o isolamento absoluto dos testes de integração, criamos um **Orchestrator de Testes** ([orchestrator.go](file:///c:/Users/konam/OneDrive/Desktop/Workstation/Pedro%20Tec/kiichain-assessment/tests/orchestrator.go)).
-* Ele abstrai operações pesadas de infraestrutura como inicialização de pool de conexão, execução de migrations sob demanda, limpeza do banco (`TRUNCATE TABLE` com cascade) entre testes, injeção de saldos falsos (seeding) e consultas diretas para asserções físicas de saldo.
 
-### 4. Submissão Proposital do `.env.development`
-O arquivo de configuração local `.env.development` **foi mantido de forma proposital no repositório Git**.
-* **Zero Friction**: Esta decisão visa reduzir a fricção de inicialização do avaliador. Não há necessidade de criar ou renomear arquivos de ambiente manualmente para rodar a suite de testes locais ou subir a aplicação pela primeira vez.
+To avoid code duplication (DRY) and ensure absolute isolation of integration tests, we created a custom **Test Orchestrator** ([orchestrator.go](tests/orchestrator.go)).
 
-### 5. Filtro de Input nos Controllers (`filterInput`)
-A validação de integridade dos dados de entrada (como checagem de parâmetros nulos, tipos inválidos e conversões decimais) foi isolada dentro de um método helper privado `filterInput` em cada Controller.
-* Isso garante que a assinatura dos handlers HTTP principais permaneça limpa, legível e focada em controlar o fluxo, delegando a higienização primária de payload para uma sub-função com responsabilidade única.
+- It abstracts heavy infrastructure operations such as managing database connection pools, running migrations on demand, cleaning up tables (`TRUNCATE TABLE` with cascade) between test runs, seeding mock balances, and performing direct database queries for physical assertions.
 
-### 6. Linting Rígido & Fluxo de CI
-* **Linter (`golangci-lint`)**: Adicionamos um arquivo de configuração rígido [`.golangci.yml`](file:///c:/Users/konam/OneDrive/Desktop/Workstation/Pedro%20Tec/kiichain-assessment/.golangci.yml) para rodar verificações de formatação estrita, checagem de erros ignorados (`errcheck`), importações não utilizadas e boas práticas.
-* **CI (GitHub Actions)**: Configuramos um pipeline no GitHub Actions ([`ci.yml`](file:///c:/Users/konam/OneDrive/Desktop/Workstation/Pedro%20Tec/kiichain-assessment/.github/workflows/ci.yml)) que, a cada push ou pull request, inicializa uma instância isolada do PostgreSQL como serviço no GitHub Runner, formata o código, executa o linter estático e roda toda a suíte de testes de integração.
+### 4. Intentional Submission of `.env.development`
+
+The local configuration file `.env.development` **was intentionally committed to the Git repository**.
+
+- **Zero Friction**: This decision was made to simplify evaluation. The reviewer does not need to manually configure or rename environment files to run tests or start the server for the first time.
+
+### 5. Input Filtering in Controllers (`filterInput`)
+
+Input validation (such as checking for empty parameters, invalid types, and parsing decimal values) is isolated inside a private helper method called `filterInput` on each controller.
+
+- This keeps the main HTTP handler functions clean, readable, and focused on control flow, delegating request payload sanitization and constraint checking to a single-responsibility function.
+
+### 6. Strict Linting & CI Workflow
+
+- **Linter (`golangci-lint`)**: A rigorous [`.golangci.yml`](.golangci.yml) file is configured to run static analysis, formatting checks (`gofmt`), unused code checks, and warning controls (like missing error checks).
+- **CI (GitHub Actions)**: We configured a GitHub Actions workflow ([`ci.yml`](.github/workflows/ci.yml)) that, on every push or pull request, provisions an isolated PostgreSQL service container, checks code formatting, runs the linter, and executes all integration tests.
+
+![alt text](ci-image.png)
 
 ---
 
-## 📂 Estrutura de Pastas
+## 📂 Folder Structure
 
 ```
 kiichain-assessment/
 ├── .github/workflows/
-│   └── ci.yml              # Fluxo de CI automatizado (Linter + Testes)
+│   └── ci.yml              # Automated CI workflow (Linter + Tests)
 ├── cmd/
 │   └── server/
-│       └── main.go         # Bootstraps da API (Inicializa DB, Roteador e Servidor)
+│       └── main.go         # API Entrypoint (Initializes DB, Router, and HTTP Server)
 ├── config/
-│   └── config.go           # Carregador de variáveis de ambiente com defaults
+│   └── config.go           # Environment variables loader with fallback defaults
 ├── db/
 │   └── migrations/
-│       ├── 000001_init.up.sql  # Definição física de tabelas e chaves únicas
-│       └── migrations.go       # Embed de migrations do banco
+│       ├── 000001_init.up.sql  # SQL schema migrations (ledger_entries, balances)
+│       └── migrations.go       # Embeds migration queries at compile-time
 ├── pkg/
-│   ├── controllers/        # C: Controllers (recepção de request, chamada ao filterInput)
+│   ├── controllers/        # C: Controllers (intercepts HTTP request, invokes filterInput)
 │   │   ├── webhook_controller.go
 │   │   └── balance_controller.go
-│   ├── middleware/         # Middlewares (Assinatura HMAC, X-Empty-Header, Structured Log)
+│   ├── middleware/         # HTTP Middlewares (HMAC validation, custom headers, logging)
 │   │   ├── auth.go
 │   │   ├── headers.go
 │   │   └── logger.go
-│   ├── models/             # M: Models (Interações físicas de escrita e leitura de saldos)
+│   ├── models/             # M: Models (Database connection, ledger entries, and balance queries)
 │   │   ├── db.go
 │   │   ├── ledger_entry.go
 │   │   └── balance.go
-│   └── views/              # V: Views (Serialização segura de precisão decimal)
+│   └── views/              # V: Views (Serialization with float/decimal precision preservation)
 │       └── response.go
 ├── tests/
-│   ├── integration/        # Testes de integração física contra Postgres
+│   ├── integration/        # Integration tests running against a real Postgres DB
 │   │   ├── balance/
 │   │   │   └── get_test.go
 │   │   └── webhook/
 │   │       └── post_test.go
-│   └── orchestrator.go     # Abstração de controle de testes e infraestrutura
-├── .env.development        # Configurações de ambiente (enviado propositalmente)
-├── .golangci.yml           # Configuração de linters rigorosos de código
-├── Dockerfile              # Construção multi-estágio da aplicação
-├── docker-compose.yml      # Docker Compose com postgres integrado
-└── run.sh                  # Script bash com curl para validação E2E
+│   └── orchestrator.go     # Orchestration helper to clean/seed database during tests
+├── .env.development        # Environment configurations (committed intentionally)
+├── .golangci.yml           # Strict static analysis configuration rules
+├── Dockerfile              # Production multi-stage Docker build
+├── docker-compose.yml      # Local dev environment orchestration
+└── run.sh                  # Bash script simulating E2E calls using curl & openssl
 ```
 
 ---
 
-## ⚙️ Variáveis de Ambiente Configuráveis
+## ⚙️ Environment Variables
 
-| Variável | Descrição | Padrão |
-| :--- | :--- | :--- |
-| `PORT` | Porta usada pelo servidor HTTP | `8080` |
-| `HMAC_SECRET` | Chave simétrica usada para assinar/verificar payloads | *(Obrigatória)* |
-| `TOLERANCE_MINUTES` | Janela de tolerância em minutos para expiração de timestamp | `5` |
-| `DB_HOST` | Host do banco PostgreSQL | `localhost` |
-| `DB_PORT` | Porta do banco PostgreSQL | `5432` |
-| `DB_USER` | Usuário do banco PostgreSQL | `postgres` |
-| `DB_PASSWORD` | Senha do banco PostgreSQL | `postgres` |
-| `DB_NAME` | Nome do banco PostgreSQL | `ledger` |
-| `DB_SSLMODE` | SSL Mode para a conexão Postgres | `disable` |
+| Variable            | Description                                                   | Default      |
+| :------------------ | :------------------------------------------------------------ | :----------- |
+| `PORT`              | HTTP Port the server listens on                               | `8080`       |
+| `HMAC_SECRET`       | Symmetric key used to sign and verify request payloads        | _(Required)_ |
+| `TOLERANCE_MINUTES` | Time window tolerance in minutes to reject expired timestamps | `5`          |
+| `DB_HOST`           | Hostname of the Postgres DB                                   | `localhost`  |
+| `DB_PORT`           | Port of the Postgres DB                                       | `5432`       |
+| `DB_USER`           | Username for the Postgres DB                                  | `postgres`   |
+| `DB_PASSWORD`       | Password for the Postgres DB                                  | `postgres`   |
+| `DB_NAME`           | Name of the database to connect to                            | `ledger`     |
+| `DB_SSLMODE`        | SSL Mode connection setting                                   | `disable`    |
 
 ---
 
-## 📖 Documentação da API
+## 📖 API Documentation
 
-### 1. Registrar Transação via Webhook
-* **Rota**: `POST /webhook`
-* **Headers de Segurança**:
-  * `X-Timestamp`: Unix Timestamp em segundos do envio da requisição.
-  * `X-Nonce`: Identificador único (UUID ou string aleatória) de uso único.
-  * `X-Signature`: Assinatura HMAC-SHA256 hex-encoded do payload.
-* **Formato do Payload Assinado**:
+### 1. Update Ledger Webhook
+
+- **Endpoint**: `POST /webhook`
+- **Security Headers**:
+  - `X-Timestamp`: Unix Timestamp in seconds of when the request was initiated.
+  - `X-Nonce`: Unique string identifier to prevent replay attacks (single-use).
+  - `X-Signature`: Hex-encoded HMAC-SHA256 signature of the payload.
+- **Signature Signature Format**:
   `payload = X-Timestamp + "\n" + X-Nonce + "\n" + <raw_body_bytes>`
-* **Exemplo de Body (JSON)**:
+- **Request Body Example (JSON)**:
   ```json
   {
     "user": "user_alice",
@@ -132,15 +146,16 @@ kiichain-assessment/
     "amount": "1.500000000000000000"
   }
   ```
-* **Respostas HTTP**:
-  * `200 OK`: Transação criada e saldo consolidado com sucesso.
-  * `400 Bad Request`: Payload malformado, headers ausentes ou timestamp fora da tolerância (replay check).
-  * `401 Unauthorized`: Assinatura HMAC inválida.
-  * `409 Conflict`: Replay attack detectado (nonce repetido).
+- **HTTP Responses**:
+  - `200 OK`: Transaction recorded and balance consolidated successfully.
+  - `400 Bad Request`: Expired timestamp, missing headers, or malformed JSON.
+  - `401 Unauthorized`: Invalid HMAC signature.
+  - `409 Conflict`: Replay attack detected (nonce already processed).
 
-### 2. Consultar Saldos Consolidados
-* **Rota**: `GET /balance/{user}`
-* **Exemplo de Resposta (200 OK)**:
+### 2. Query Consolidated User Balances
+
+- **Endpoint**: `GET /balance/{user}`
+- **Response Example (200 OK)**:
   ```json
   {
     "user": "user_alice",
@@ -149,34 +164,40 @@ kiichain-assessment/
     }
   }
   ```
-  *(Nota: Se o usuário não existir no banco, a API retorna um objeto balances vazio formatado em JSON `{}`).*
+  _(Note: If the requested user does not exist in the database, the API returns a success response with an empty balances object: `{"user":"unknown_user","balances":{}}`)._
 
 ---
 
-## 🧪 Verificação & Testes de Integração
+## 🧪 Verification & Integration Testing
 
-### 1. Rodar a Suíte de Testes Locais
-Para validar de ponta a ponta as condições de concorrência, idempotência e precisão aritmética de 18 casas decimais:
-1. Suba apenas o contêiner do banco de dados:
+### 1. Run Integration Tests
+
+To execute automated integration tests checking concurrency safety, replay protection, and 18-decimal-place float precision:
+
+1. Start only the PostgreSQL database container:
    ```bash
    docker compose up -d db
    ```
-2. Execute o comando Go de testes:
+2. Run the Go test suite:
    ```bash
    go test -p 1 -count=1 -v ./tests/integration/...
    ```
 
-### 2. Rodar Script de Simulação E2E
-Criamos um script utilitário (`run.sh`) que faz chamadas curl assinadas gerando assinaturas válidas em tempo de execução:
+### 2. Run E2E Simulation Script
+
+We provide a helper script (`run.sh`) that triggers signed HTTP curl requests using your local OpenSSL library:
+
 ```bash
 chmod +x run.sh
 ./run.sh
 ```
-O script simula:
-1. Verificação de saldo inicial vazio (`{}`).
-2. Depósito bem sucedido de `1500.50 USDT`.
-3. Bloqueio de **Replay Attack** enviando o mesmo nonce (retorna `409 Conflict`).
-4. Bloqueio de assinatura inválida (retorna `401 Unauthorized`).
-5. Bloqueio de timestamp expirado (retorna `400 Bad Request`).
-6. Dedução bem sucedida de `500.25 USDT`.
-7. Verificação de saldo acumulado de exatamente `1000.25 USDT`.
+
+The script validates the following sequence:
+
+1. Queries initial empty balance (`{}`).
+2. Processes a valid deposit of `1500.50 USDT`.
+3. Blocks a **Replay Attack** by resending the same nonce (expects `409 Conflict`).
+4. Blocks an invalid signature payload (expects `401 Unauthorized`).
+5. Blocks an expired request timestamp (expects `400 Bad Request`).
+6. Processes a valid deduction of `500.25 USDT`.
+7. Asserts the final balance is exactly `1000.25 USDT`.
