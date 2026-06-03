@@ -18,6 +18,7 @@ import (
 	"kiichain-assessment/pkg/controllers"
 	"kiichain-assessment/pkg/middleware"
 	"kiichain-assessment/pkg/models"
+	"kiichain-assessment/pkg/views"
 	"kiichain-assessment/tests"
 
 	"github.com/go-chi/chi/v5"
@@ -41,13 +42,16 @@ func TestWebhookIntegration(t *testing.T) {
 
 	ledgerRepo := models.NewLedgerRepository(orch.DB)
 
-	// Setup controller and router
+	// Setup controllers and router
 	webhookController := controllers.NewWebhookController(ledgerRepo)
+	balanceRepo := models.NewBalanceRepository(orch.DB)
+	balanceController := controllers.NewBalanceController(balanceRepo)
 
 	r := chi.NewRouter()
 	r.Use(middleware.HeadersMiddleware)
 	r.With(middleware.AuthMiddleware(ledgerRepo, orch.Config.HMACSecret, orch.Config.ToleranceSeconds)).
 		Post("/webhook", webhookController.HandleWebhook)
+	r.Get("/balance/{user}", balanceController.HandleGetBalance)
 
 	server := httptest.NewServer(r)
 	defer server.Close()
@@ -404,6 +408,129 @@ func TestWebhookIntegration(t *testing.T) {
 		expectedSum := decimal.NewFromFloat(float64(concurrentCount)).Mul(decimal.RequireFromString(amountPerReq))
 		if !bal.Equal(expectedSum) {
 			t.Errorf("Lost update or incorrect balance accumulation: expected %s, got %s", expectedSum, bal)
+		}
+	})
+
+	t.Run("Precision - High-Precision Arithmetic and Value Preservation", func(t *testing.T) {
+		// Clean database
+		orch.CleanDatabase(t)
+
+		userID := "user_precision_test"
+		asset := "BTC"
+
+		// 1. Send first deposit with 18 decimal places (very small amount)
+		amount1 := "0.000000000000000001" // 1 wei-equivalent
+		nonce1 := "nonce_precision_1"
+		reqBody1 := controllers.WebhookRequest{
+			User:   userID,
+			Asset:  asset,
+			Amount: amount1,
+		}
+		bodyBytes1, _ := json.Marshal(reqBody1)
+		timestampStr1 := strconv.FormatInt(time.Now().Unix(), 10)
+		sig1 := computeHMAC(orch.Config.HMACSecret, timestampStr1, nonce1, bodyBytes1)
+
+		req1, _ := http.NewRequest(http.MethodPost, server.URL+"/webhook", bytes.NewReader(bodyBytes1))
+		req1.Header.Set("Content-Type", "application/json")
+		req1.Header.Set("X-Timestamp", timestampStr1)
+		req1.Header.Set("X-Nonce", nonce1)
+		req1.Header.Set("X-Signature", sig1)
+
+		resp1, err := http.DefaultClient.Do(req1)
+		if err != nil {
+			t.Fatalf("Request 1 failed: %v", err)
+		}
+		_ = resp1.Body.Close()
+		if resp1.StatusCode != http.StatusOK {
+			t.Fatalf("Expected 200 OK, got %d", resp1.StatusCode)
+		}
+
+		// 2. Send second deposit (another small amount)
+		amount2 := "0.000000000000000009"
+		nonce2 := "nonce_precision_2"
+		reqBody2 := controllers.WebhookRequest{
+			User:   userID,
+			Asset:  asset,
+			Amount: amount2,
+		}
+		bodyBytes2, _ := json.Marshal(reqBody2)
+		timestampStr2 := strconv.FormatInt(time.Now().Unix(), 10)
+		sig2 := computeHMAC(orch.Config.HMACSecret, timestampStr2, nonce2, bodyBytes2)
+
+		req2, _ := http.NewRequest(http.MethodPost, server.URL+"/webhook", bytes.NewReader(bodyBytes2))
+		req2.Header.Set("Content-Type", "application/json")
+		req2.Header.Set("X-Timestamp", timestampStr2)
+		req2.Header.Set("X-Nonce", nonce2)
+		req2.Header.Set("X-Signature", sig2)
+
+		resp2, err := http.DefaultClient.Do(req2)
+		if err != nil {
+			t.Fatalf("Request 2 failed: %v", err)
+		}
+		_ = resp2.Body.Close()
+		if resp2.StatusCode != http.StatusOK {
+			t.Fatalf("Expected 200 OK, got %d", resp2.StatusCode)
+		}
+
+		// 3. Send third deposit (a very large number to test combination of huge + tiny values)
+		amount3 := "123456789012345678.000000000000000005"
+		nonce3 := "nonce_precision_3"
+		reqBody3 := controllers.WebhookRequest{
+			User:   userID,
+			Asset:  asset,
+			Amount: amount3,
+		}
+		bodyBytes3, _ := json.Marshal(reqBody3)
+		timestampStr3 := strconv.FormatInt(time.Now().Unix(), 10)
+		sig3 := computeHMAC(orch.Config.HMACSecret, timestampStr3, nonce3, bodyBytes3)
+
+		req3, _ := http.NewRequest(http.MethodPost, server.URL+"/webhook", bytes.NewReader(bodyBytes3))
+		req3.Header.Set("Content-Type", "application/json")
+		req3.Header.Set("X-Timestamp", timestampStr3)
+		req3.Header.Set("X-Nonce", nonce3)
+		req3.Header.Set("X-Signature", sig3)
+
+		resp3, err := http.DefaultClient.Do(req3)
+		if err != nil {
+			t.Fatalf("Request 3 failed: %v", err)
+		}
+		_ = resp3.Body.Close()
+		if resp3.StatusCode != http.StatusOK {
+			t.Fatalf("Expected 200 OK, got %d", resp3.StatusCode)
+		}
+
+		// Query the final balance using the GET /balance endpoint to verify view representation
+		reqGet, _ := http.NewRequest(http.MethodGet, server.URL+"/balance/"+userID, nil)
+		respGet, err := http.DefaultClient.Do(reqGet)
+		if err != nil {
+			t.Fatalf("Get request failed: %v", err)
+		}
+		defer func() { _ = respGet.Body.Close() }()
+
+		if respGet.StatusCode != http.StatusOK {
+			t.Fatalf("Expected 200 OK from GET balance, got %d", respGet.StatusCode)
+		}
+
+		bodyBytesGet, _ := io.ReadAll(respGet.Body)
+		var balanceRes views.BalanceResponse
+		if err := json.Unmarshal(bodyBytesGet, &balanceRes); err != nil {
+			t.Fatalf("Failed to unmarshal response: %v", err)
+		}
+
+		btcVal, ok := balanceRes.Balances[asset]
+		if !ok {
+			t.Fatalf("Expected BTC balance to be present")
+		}
+
+		// Expected sum is:
+		//   0.000000000000000001
+		// + 0.000000000000000009
+		// + 123456789012345678.000000000000000005
+		// = 123456789012345678.000000000000000015
+		// (Standard float64 would round/truncate this due to lack of precision, typically only has 15-17 significant digits)
+		expectedSum := "123456789012345678.000000000000000015"
+		if btcVal != expectedSum {
+			t.Errorf("Precision lost during arithmetic aggregation: expected '%s', got '%s'", expectedSum, btcVal)
 		}
 	})
 }
