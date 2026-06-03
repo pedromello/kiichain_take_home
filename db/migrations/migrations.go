@@ -1,3 +1,4 @@
+// Package migrations provides database schema initialization queries.
 package migrations
 
 import _ "embed"

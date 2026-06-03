@@ -1,3 +1,4 @@
+// Package models manages database schemas, query handlers, and data structs for balance and ledger logs.
 package models
 
 import (
@@ -33,7 +34,7 @@ func (r *BalanceRepository) GetUserBalances(ctx context.Context, userID string) 
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	return scanBalances(rows)
 }

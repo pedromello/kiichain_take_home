@@ -76,7 +76,7 @@ func TestWebhookIntegration(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Request failed: %v", err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		// Assertions
 		if resp.StatusCode != http.StatusOK {
@@ -124,7 +124,7 @@ func TestWebhookIntegration(t *testing.T) {
 		if err != nil {
 			t.Fatalf("First request failed: %v", err)
 		}
-		resp1.Body.Close()
+		_ = resp1.Body.Close()
 
 		if resp1.StatusCode != http.StatusOK {
 			t.Fatalf("Expected first request to succeed, got %d", resp1.StatusCode)
@@ -141,7 +141,7 @@ func TestWebhookIntegration(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Second request failed: %v", err)
 		}
-		defer resp2.Body.Close()
+		defer func() { _ = resp2.Body.Close() }()
 
 		if resp2.StatusCode != http.StatusConflict {
 			t.Errorf("Expected 409 Conflict for duplicate nonce, got %d", resp2.StatusCode)
@@ -170,7 +170,7 @@ func TestWebhookIntegration(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Request failed: %v", err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusUnauthorized {
 			t.Errorf("Expected 401 Unauthorized for bad signature, got %d", resp.StatusCode)
@@ -200,7 +200,7 @@ func TestWebhookIntegration(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Request failed: %v", err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusBadRequest {
 			t.Errorf("Expected 400 Bad Request for expired timestamp, got %d", resp.StatusCode)
@@ -229,7 +229,7 @@ func TestWebhookIntegration(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Request failed: %v", err)
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("Expected 200 OK, got %d", resp.StatusCode)

@@ -6,6 +6,7 @@ import (
 	"kiichain-assessment/config"
 	"kiichain-assessment/db/migrations"
 
+	// Register the PostgreSQL driver for database/sql
 	_ "github.com/lib/pq"
 )
 
@@ -23,7 +24,7 @@ func InitDB(cfg *config.Config) (*sql.DB, error) {
 
 	// Ping database to verify connection is established
 	if err = db.Ping(); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("error pinging database: %w", err)
 	}
 
@@ -31,24 +32,24 @@ func InitDB(cfg *config.Config) (*sql.DB, error) {
 	// to prevent DDL race conditions when multiple test suites or services start concurrently.
 	tx, err := db.Begin()
 	if err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("error beginning migration transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	// Acquire a transaction-level advisory lock using a constant key (e.g., 42069)
 	if _, err = tx.Exec("SELECT pg_advisory_xact_lock(42069);"); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("error acquiring migration advisory lock: %w", err)
 	}
 
 	if _, err = tx.Exec(migrations.InitSQL); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("error running database schema migrations: %w", err)
 	}
 
 	if err = tx.Commit(); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("error committing migration transaction: %w", err)
 	}
 

@@ -1,3 +1,4 @@
+// Package views defines standard API view schemas and helper functions to write structured JSON responses.
 package views
 
 import (

@@ -1,3 +1,4 @@
+// Package middleware provides HTTP middlewares for routing, logging, authorization, and custom header settings.
 package middleware
 
 import (
@@ -37,7 +38,7 @@ func AuthMiddleware(repo *models.LedgerRepository, secretKey []byte, tolerance t
 			}
 
 			timestamp := time.Unix(unixSec, 0)
-			diff := time.Now().Sub(timestamp)
+			diff := time.Since(timestamp)
 			if diff < 0 {
 				diff = -diff
 			}

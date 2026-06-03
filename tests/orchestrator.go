@@ -1,3 +1,4 @@
+// Package tests contains integration test utilities and orchestration helpers.
 package tests
 
 import (
@@ -24,7 +25,7 @@ func NewOrchestrator(t *testing.T) *Orchestrator {
 
 	// Ensure temporary environment variables for tests are set
 	if os.Getenv("HMAC_SECRET") == "" {
-		os.Setenv("HMAC_SECRET", "test-secret-key-very-long-and-secure")
+		_ = os.Setenv("HMAC_SECRET", "test-secret-key-very-long-and-secure")
 	}
 
 	cfg, err := config.LoadConfig()
@@ -46,7 +47,7 @@ func NewOrchestrator(t *testing.T) *Orchestrator {
 // Close closes the underlying database connection pool.
 func (o *Orchestrator) Close() {
 	if o.DB != nil {
-		o.DB.Close()
+		_ = o.DB.Close()
 	}
 }
 

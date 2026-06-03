@@ -43,7 +43,7 @@ func (r *LedgerRepository) CreateLedgerEntry(ctx context.Context, entry *LedgerE
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	// Will rollback automatically if function returns with error before committing
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	// 1. Insert the ledger entry
 	if err := r.insertLedgerEntry(ctx, tx, entry); err != nil {

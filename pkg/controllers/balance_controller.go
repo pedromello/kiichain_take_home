@@ -1,3 +1,4 @@
+// Package controllers implements the request handlers for the application endpoints.
 package controllers
 
 import (
